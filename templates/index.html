@@ -314,6 +314,12 @@
     const tbody = document.getElementById("tbody");
     const noRes = document.getElementById("no-results");
 
+    // Update metric cards to reflect filtered data
+    document.getElementById("cnt-buy").textContent   = data.filter(r => r.signal === "BUY").length;
+    document.getElementById("cnt-sell").textContent  = data.filter(r => r.signal === "SELL").length;
+    document.getElementById("cnt-hold").textContent  = data.filter(r => r.signal === "HOLD").length;
+    document.getElementById("cnt-total").textContent = data.length;
+
     if (data.length === 0) {
       tbody.innerHTML = "";
       noRes.style.display = "block";
