@@ -21,10 +21,14 @@ st.set_page_config(
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; }
-    .signal-buy  { background:#16a34a; color:#fff; padding:2px 10px; border-radius:4px; font-weight:bold; }
-    .signal-sell { background:#dc2626; color:#fff; padding:2px 10px; border-radius:4px; font-weight:bold; }
-    .signal-hold { background:#d97706; color:#fff; padding:2px 10px; border-radius:4px; font-weight:bold; }
-    div[data-testid="metric-container"] { background:#1e1e2e; border-radius:8px; padding:12px; }
+    div[data-testid="metric-container"] {
+        background: #1e1e2e; border-radius: 10px; padding: 14px;
+    }
+    /* Mobile: stack dropdowns */
+    @media (max-width: 768px) {
+        .block-container { padding: 0.5rem 0.5rem; }
+        div[data-testid="stDataFrame"] { font-size: 12px !important; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -160,7 +164,7 @@ def run_screener() -> pd.DataFrame:
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
-st.title("📈 Stock Screener — S&P 500")
+st.title("📈 Stock Screener — S&P 500 📊")
 
 # Refresh button
 col_title, col_btn = st.columns([6, 1])
@@ -179,10 +183,10 @@ n_sell = (df["Signal"] == "SELL").sum()
 n_hold = (df["Signal"] == "HOLD").sum()
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("🟢 BUY",  n_buy)
-m2.metric("🔴 SELL", n_sell)
-m3.metric("🟡 HOLD", n_hold)
-m4.metric("📊 Total", len(df))
+m1.metric("📈 BUY",  n_buy)
+m2.metric("📉 SELL", n_sell)
+m3.metric("📊 HOLD", n_hold)
+m4.metric("🔢 Total", len(df))
 
 st.divider()
 
@@ -223,10 +227,12 @@ view = view.sort_values(sort_col, ascending=sort_asc).reset_index(drop=True)
 # ── Display ────────────────────────────────────────────────────────────────────
 display_cols = ["Ticker", "Company", "Sector", "Price", "1W %", "1M %", "Rel Str %", "RSI", "vs SMA50 %", "Score", "Signal", "Reasons"]
 
+SIGNAL_EMOJI = {"BUY": "📈 BUY", "SELL": "📉 SELL", "HOLD": "📊 HOLD"}
+
 def color_signal_col(val):
-    if val == "BUY":  return "background-color:#16a34a;color:white;font-weight:bold"
-    if val == "SELL": return "background-color:#dc2626;color:white;font-weight:bold"
-    if val == "HOLD": return "background-color:#d97706;color:white;font-weight:bold"
+    if "BUY"  in str(val): return "background-color:#16a34a;color:white;font-weight:bold;font-size:14px"
+    if "SELL" in str(val): return "background-color:#dc2626;color:white;font-weight:bold;font-size:14px"
+    if "HOLD" in str(val): return "background-color:#d97706;color:white;font-weight:bold;font-size:14px"
     return ""
 
 def color_score(val):
@@ -236,15 +242,26 @@ def color_score(val):
 
 def color_rsi(val):
     if pd.isna(val): return ""
-    if val < 30: return "color:#4ade80"
-    if val > 70: return "color:#f87171"
+    if val < 30: return "color:#4ade80;font-weight:bold"
+    if val > 70: return "color:#f87171;font-weight:bold"
     return ""
 
+def color_relstr(val):
+    if pd.isna(val): return ""
+    if val > 0: return "color:#4ade80"
+    if val < 0: return "color:#f87171"
+    return ""
+
+# Map signal to emoji version just for display
+display_view = view[display_cols].copy()
+display_view["Signal"] = display_view["Signal"].map(SIGNAL_EMOJI).fillna(display_view["Signal"])
+
 styled = (
-    view[display_cols].style
+    display_view.style
     .map(color_signal_col, subset=["Signal"])
     .map(color_score,      subset=["Score"])
     .map(color_rsi,        subset=["RSI"])
+    .map(color_relstr,     subset=["Rel Str %"])
     .format({
         "Price":      "${:.2f}",
         "1W %":       "{:+.2f}%",
