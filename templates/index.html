@@ -28,17 +28,38 @@
       z-index: 100;
     }
     header h1 { font-size: 1.2rem; font-weight: 700; }
-    #refresh-btn {
-      background: #3b82f6;
-      color: #fff;
-      border: none;
+    .universe-toggle {
+      display: flex;
+      background: #0f0f14;
       border-radius: 8px;
-      padding: 8px 16px;
+      padding: 3px;
+      gap: 3px;
+    }
+    .uni-btn {
+      background: transparent;
+      color: #94a3b8;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .uni-btn.active { background: #3b82f6; color: #fff; font-weight: 600; }
+    .uni-btn:hover:not(.active) { color: #e2e8f0; }
+
+    #refresh-btn {
+      background: #1e1e30;
+      color: #94a3b8;
+      border: 1px solid #3d3d5c;
+      border-radius: 8px;
+      padding: 8px 14px;
       font-size: 0.85rem;
       cursor: pointer;
       white-space: nowrap;
     }
-    #refresh-btn:hover { background: #2563eb; }
+    #refresh-btn:hover { background: #2d2d44; color: #e2e8f0; }
 
     /* ── Metrics ── */
     .metrics {
@@ -185,7 +206,11 @@
 <body>
 
 <header>
-  <h1>📈 Stock Screener &nbsp;<span style="font-weight:400;color:#64748b;font-size:0.85rem">S&amp;P 500</span></h1>
+  <h1>📈 Stock Screener</h1>
+  <div class="universe-toggle">
+    <button class="uni-btn active" data-uni="sp500">🇺🇸 S&amp;P 500</button>
+    <button class="uni-btn" data-uni="egx">🇪🇬 EGX</button>
+  </div>
   <button id="refresh-btn">🔄 Refresh</button>
 </header>
 
@@ -265,10 +290,11 @@
 </div>
 
 <script>
-  let allData   = [];
+  let allData    = [];
   let allSectors = [];
-  let sortCol   = "score";
-  let sortDir   = "desc";
+  let sortCol    = "score";
+  let sortDir    = "desc";
+  let universe   = "sp500";
 
   const fmt = (v, dec=2, prefix="", suffix="") =>
     v == null ? "—" : `${prefix}${(+v).toFixed(dec)}${suffix}`;
@@ -359,20 +385,21 @@
     renderTable();
   }
 
+  function showLoading(msg) {
+    document.getElementById("loading").style.display    = "flex";
+    document.getElementById("table-wrap").style.display = "none";
+    document.querySelector("#loading p").textContent    = msg || "Computing signals…";
+  }
+
   function loadData() {
-    fetch("/api/data")
+    fetch(`/api/data?universe=${universe}`)
       .then(r => r.json())
       .then(json => {
         if (json.status === "ready") {
           allData    = json.data;
           allSectors = json.sectors;
 
-          // Counts
-          document.getElementById("cnt-buy").textContent   = json.counts.buy;
-          document.getElementById("cnt-sell").textContent  = json.counts.sell;
-          document.getElementById("cnt-hold").textContent  = json.counts.hold;
-          document.getElementById("cnt-total").textContent = json.counts.total;
-          document.getElementById("updated").textContent   = "Last updated: " + json.updated;
+          document.getElementById("updated").textContent = "Last updated: " + json.updated;
 
           // Populate sector dropdown
           const sel = document.getElementById("sector-sel");
@@ -389,11 +416,28 @@
         } else if (json.status && json.status.startsWith("error")) {
           document.querySelector("#loading p").textContent = "Error: " + json.status;
         } else {
-          setTimeout(loadData, 3000); // poll while computing
+          const label = universe === "egx" ? "EGX (loads fast ~5s)" : "S&P 500 (~60s first load)";
+          document.querySelector("#loading p").textContent = `Computing signals for ${label}…`;
+          setTimeout(loadData, 3000);
         }
       })
       .catch(() => setTimeout(loadData, 5000));
   }
+
+  // Universe toggle
+  document.querySelectorAll(".uni-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.uni === universe) return;
+      universe = btn.dataset.uni;
+      document.querySelectorAll(".uni-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById("search-input").value = "";
+      document.getElementById("sector-sel").value   = "";
+      document.getElementById("signal-sel").value   = "";
+      showLoading();
+      loadData();
+    });
+  });
 
   // Sort dropdown
   document.getElementById("sort-sel").addEventListener("change", function() {
@@ -414,9 +458,8 @@
 
   // Refresh button
   document.getElementById("refresh-btn").addEventListener("click", () => {
-    document.getElementById("loading").style.display    = "flex";
-    document.getElementById("table-wrap").style.display = "none";
-    fetch("/api/refresh", { method: "POST" })
+    showLoading();
+    fetch(`/api/refresh?universe=${universe}`, { method: "POST" })
       .then(() => setTimeout(loadData, 3000));
   });
 

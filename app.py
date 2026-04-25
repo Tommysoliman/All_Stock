@@ -8,15 +8,50 @@ import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 from ta.momentum import RSIIndicator
 from ta.trend import MACD, SMAIndicator
 from ta.volatility import BollingerBands
 
 app = Flask(__name__)
 
-_state = {"df": None, "status": "computing", "updated": None}
-_lock  = threading.Lock()
+# ── EGX30 master list (hardcoded — no Wikipedia needed) ───────────────────────
+EGX_META = {
+    "COMI.CA":  ("Commercial International Bank", "Banking",            "Commercial Banking"),
+    "HRHO.CA":  ("EFG Hermes Holding",            "Financial Services", "Investment Banking"),
+    "SWDY.CA":  ("Elsewedy Electric",              "Industrials",        "Electrical Equipment"),
+    "TMGH.CA":  ("Talaat Moustafa Group",          "Real Estate",        "Real Estate Development"),
+    "ORWE.CA":  ("Oriental Weavers",               "Consumer Discretionary", "Textiles"),
+    "ABUK.CA":  ("Abu Kir Fertilizers",            "Materials",          "Fertilizers"),
+    "AMOC.CA":  ("Alexandria Mineral Oils",        "Energy",             "Oil & Gas"),
+    "PHDC.CA":  ("Palm Hills Developments",        "Real Estate",        "Real Estate Development"),
+    "EGTS.CA":  ("Egyptian Transport (EGYTRANS)",  "Industrials",        "Transportation"),
+    "EFIH.CA":  ("EFG Hermes",                     "Financial Services", "Investment Banking"),
+    "OCDI.CA":  ("Orascom Construction",           "Industrials",        "Construction"),
+    "CIEB.CA":  ("CIB Egypt",                      "Banking",            "Commercial Banking"),
+    "ALCN.CA":  ("Alexandria Container",           "Industrials",        "Ports & Transportation"),
+    "SKPC.CA":  ("Sidi Kerir Petrochemicals",      "Materials",          "Petrochemicals"),
+    "CLHO.CA":  ("Cleopatra Hospital",             "Healthcare",         "Healthcare Facilities"),
+    "HELI.CA":  ("Heliopolis Housing",             "Real Estate",        "Real Estate Development"),
+    "ISPH.CA":  ("Ibnsina Pharma",                 "Healthcare",         "Pharmaceuticals"),
+    "JUFO.CA":  ("Juhayna Food Industries",        "Consumer Staples",   "Food & Beverages"),
+    "RAYA.CA":  ("Raya Holding",                   "Technology",         "IT Services"),
+    "MCQE.CA":  ("Misr Chemical Industries",       "Materials",          "Chemicals"),
+    "SPMD.CA":  ("Speed Medical",                  "Healthcare",         "Healthcare Services"),
+    "ACGC.CA":  ("Arab Cotton Ginning",            "Materials",          "Textiles & Fibers"),
+    "SUGR.CA":  ("Delta Sugar",                    "Consumer Staples",   "Food & Beverages"),
+    "POUL.CA":  ("Cairo Poultry",                  "Consumer Staples",   "Poultry & Meat"),
+}
+
+# ── State: one entry per universe ─────────────────────────────────────────────
+_state = {
+    "sp500": {"df": None, "status": "computing", "updated": None},
+    "egx":   {"df": None, "status": "computing", "updated": None},
+}
+_locks = {
+    "sp500": threading.Lock(),
+    "egx":   threading.Lock(),
+}
 
 
 def get_sp500_meta() -> pd.DataFrame:
@@ -30,10 +65,16 @@ def get_sp500_meta() -> pd.DataFrame:
     )
 
 
-def compute_one(ticker: str, raw, meta_row: dict):
+def get_egx_meta() -> pd.DataFrame:
+    rows = [{"Symbol": k, "Company": v[0], "Sector": v[1], "Industry": v[2]}
+            for k, v in EGX_META.items()]
+    return pd.DataFrame(rows)
+
+
+def compute_one(ticker: str, raw, meta_row: dict, multi: bool = True):
     try:
-        df = raw[ticker].dropna(how="all").copy()
-        if len(df) < 60:
+        df = raw[ticker].dropna(how="all").copy() if multi else raw.dropna(how="all").copy()
+        if len(df) < 30:
             return None
         df.columns = [c.lower() for c in df.columns]
         close = df["close"]
@@ -42,7 +83,7 @@ def compute_one(ticker: str, raw, meta_row: dict):
         macd_obj = MACD(close=close)
         bb_obj   = BollingerBands(close=close, window=20, window_dev=2)
         sma50_s  = SMAIndicator(close=close, window=50).sma_indicator()
-        sma200_s = SMAIndicator(close=close, window=200).sma_indicator()
+        sma200_s = SMAIndicator(close=close, window=min(200, len(close) - 1)).sma_indicator()
 
         price   = float(close.iloc[-1])
         score   = 0.0
@@ -98,40 +139,50 @@ def compute_one(ticker: str, raw, meta_row: dict):
         return None
 
 
-def run_screener():
+def _build_df(meta: pd.DataFrame) -> pd.DataFrame:
+    tickers  = tuple(meta["Symbol"].tolist())
+    raw      = yf.download(list(tickers), period="6mo", interval="1d",
+                           group_by="ticker", auto_adjust=True,
+                           threads=True, progress=False)
+    multi    = len(tickers) > 1
+    meta_map = meta.set_index("Symbol").to_dict(orient="index")
+    results  = [compute_one(t, raw, meta_map.get(t, {}), multi) for t in tickers]
+    results  = [r for r in results if r is not None]
+    df       = pd.DataFrame(results)
+
+    sector_med   = df.groupby("sector")["chg1m"].transform("median")
+    df["rel_str"] = (df["chg1m"] - sector_med).round(2)
+    df["score"]   = (df["score"] + df["rel_str"].apply(lambda x: 0.5 if x > 0 else -0.5)).round(1)
+
+    def upd_reason(row):
+        suffix = ""
+        if row["rel_str"] and row["rel_str"] > 2:   suffix = " · Outperforming sector"
+        elif row["rel_str"] and row["rel_str"] < -2: suffix = " · Underperforming sector"
+        return (row["reasons"] or "") + suffix
+    df["reasons"] = df.apply(upd_reason, axis=1)
+    df["signal"]  = df["score"].apply(lambda s: "BUY" if s >= 2 else ("SELL" if s <= -2 else "HOLD"))
+    return df.sort_values("score", ascending=False).reset_index(drop=True)
+
+
+def run_screener(universe: str):
+    lock = _locks[universe]
+    with lock:
+        _state[universe]["status"] = "computing"
     try:
-        meta     = get_sp500_meta()
-        tickers  = tuple(meta["Symbol"].tolist())
-        raw      = yf.download(list(tickers), period="6mo", interval="1d",
-                               group_by="ticker", auto_adjust=True, threads=True, progress=False)
-        meta_map = meta.set_index("Symbol").to_dict(orient="index")
-        results  = [compute_one(t, raw, meta_map.get(t, {})) for t in tickers]
-        results  = [r for r in results if r is not None]
-        df       = pd.DataFrame(results)
-
-        sector_med   = df.groupby("sector")["chg1m"].transform("median")
-        df["rel_str"] = (df["chg1m"] - sector_med).round(2)
-        df["score"]   = (df["score"] + df["rel_str"].apply(lambda x: 0.5 if x > 0 else -0.5)).round(1)
-
-        def upd_reason(row):
-            if row["rel_str"] > 2:  return row["reasons"] + (" · " if row["reasons"] else "") + "Outperforming sector"
-            if row["rel_str"] < -2: return row["reasons"] + (" · " if row["reasons"] else "") + "Underperforming sector"
-            return row["reasons"]
-        df["reasons"] = df.apply(upd_reason, axis=1)
-        df["signal"]  = df["score"].apply(lambda s: "BUY" if s >= 2 else ("SELL" if s <= -2 else "HOLD"))
-        df = df.sort_values("score", ascending=False).reset_index(drop=True)
-
-        with _lock:
-            _state["df"]      = df
-            _state["status"]  = "ready"
-            _state["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        meta = get_sp500_meta() if universe == "sp500" else get_egx_meta()
+        df   = _build_df(meta)
+        with lock:
+            _state[universe]["df"]      = df
+            _state[universe]["status"]  = "ready"
+            _state[universe]["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
     except Exception as e:
-        with _lock:
-            _state["status"] = f"error: {e}"
+        with lock:
+            _state[universe]["status"] = f"error: {e}"
 
 
-# Kick off computation on startup
-threading.Thread(target=run_screener, daemon=True).start()
+# Start both on startup
+threading.Thread(target=run_screener, args=("sp500",), daemon=True).start()
+threading.Thread(target=run_screener, args=("egx",),   daemon=True).start()
 
 
 @app.route("/")
@@ -141,10 +192,15 @@ def index():
 
 @app.route("/api/data")
 def api_data():
-    with _lock:
-        status  = _state["status"]
-        df      = _state["df"]
-        updated = _state["updated"]
+    universe = request.args.get("universe", "sp500")
+    if universe not in _state:
+        return jsonify({"status": "error: unknown universe"}), 400
+
+    lock = _locks[universe]
+    with lock:
+        status  = _state[universe]["status"]
+        df      = _state[universe]["df"]
+        updated = _state[universe]["updated"]
 
     if status == "ready" and df is not None:
         records = df.where(pd.notna(df), None).to_dict(orient="records")
@@ -154,6 +210,7 @@ def api_data():
             "data":    records,
             "sectors": sectors,
             "updated": updated,
+            "universe": universe,
             "counts": {
                 "buy":   int((df["signal"] == "BUY").sum()),
                 "sell":  int((df["signal"] == "SELL").sum()),
@@ -161,15 +218,19 @@ def api_data():
                 "total": len(df),
             },
         })
-    return jsonify({"status": status})
+    return jsonify({"status": status, "universe": universe})
 
 
 @app.route("/api/refresh", methods=["POST"])
 def refresh():
-    with _lock:
-        if _state["status"] != "computing":
-            _state["status"] = "computing"
-            threading.Thread(target=run_screener, daemon=True).start()
+    universe = request.args.get("universe", "sp500")
+    if universe not in _state:
+        return jsonify({"status": "error"}), 400
+    lock = _locks[universe]
+    with lock:
+        if _state[universe]["status"] != "computing":
+            _state[universe]["status"] = "computing"
+            threading.Thread(target=run_screener, args=(universe,), daemon=True).start()
     return jsonify({"status": "computing"})
 
 
