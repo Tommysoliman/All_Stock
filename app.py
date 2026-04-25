@@ -105,7 +105,8 @@ def compute_one(ticker: str, raw, meta_row: dict) -> dict | None:
             score += 0.5 if price > sma50 else -0.5
 
         signal  = "BUY" if score >= 2 else ("SELL" if score <= -2 else "HOLD")
-        chg1w   = (price / close.iloc[-6] - 1) * 100 if len(close) >= 6 else np.nan
+        chg1w   = (price / close.iloc[-6]  - 1) * 100 if len(close) >= 6  else np.nan
+        chg1m   = (price / close.iloc[-22] - 1) * 100 if len(close) >= 22 else np.nan
         pct_from_sma50 = ((price - sma50) / sma50 * 100) if pd.notna(sma50) else np.nan
 
         return {
@@ -115,6 +116,7 @@ def compute_one(ticker: str, raw, meta_row: dict) -> dict | None:
             "Industry":     meta_row.get("Industry","Unknown"),
             "Price":        round(price, 2),
             "1W %":         round(chg1w, 2),
+            "1M %":         round(chg1m, 2),
             "RSI":          round(rsi, 1) if pd.notna(rsi) else np.nan,
             "vs SMA50 %":   round(pct_from_sma50, 2),
             "Score":        round(score, 1),
@@ -127,13 +129,34 @@ def compute_one(ticker: str, raw, meta_row: dict) -> dict | None:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def run_screener() -> pd.DataFrame:
-    meta   = get_sp500_meta()
-    tickers = tuple(meta["Symbol"].tolist())
-    raw    = download_prices(tickers)
+    meta     = get_sp500_meta()
+    tickers  = tuple(meta["Symbol"].tolist())
+    raw      = download_prices(tickers)
     meta_map = meta.set_index("Symbol").to_dict(orient="index")
     results  = [compute_one(t, raw, meta_map.get(t, {})) for t in tickers]
     results  = [r for r in results if r is not None]
-    return pd.DataFrame(results)
+    df       = pd.DataFrame(results)
+
+    # ── Relative strength vs sector ───────────────────────────────────────────
+    sector_median = df.groupby("Sector")["1M %"].transform("median")
+    df["Rel Str %"] = (df["1M %"] - sector_median).round(2)
+
+    # Adjust score: beating sector = +0.5, lagging = -0.5
+    df["Score"] = (df["Score"] + df["Rel Str %"].apply(lambda x: 0.5 if x > 0 else -0.5)).round(1)
+
+    # Add reason for relative strength
+    def add_rel_reason(row):
+        if row["Rel Str %"] > 2:
+            return row["Reasons"] + " | Outperforming sector"
+        if row["Rel Str %"] < -2:
+            return row["Reasons"] + " | Underperforming sector"
+        return row["Reasons"]
+    df["Reasons"] = df.apply(add_rel_reason, axis=1)
+
+    # Re-apply signal after score adjustment
+    df["Signal"] = df["Score"].apply(lambda s: "BUY" if s >= 2 else ("SELL" if s <= -2 else "HOLD"))
+
+    return df.sort_values("Score", ascending=False).reset_index(drop=True)
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -198,7 +221,7 @@ sort_col, sort_asc = sort_options[sort_label]
 view = view.sort_values(sort_col, ascending=sort_asc).reset_index(drop=True)
 
 # ── Display ────────────────────────────────────────────────────────────────────
-display_cols = ["Ticker", "Company", "Sector", "Price", "1W %", "RSI", "vs SMA50 %", "Score", "Signal", "Reasons"]
+display_cols = ["Ticker", "Company", "Sector", "Price", "1W %", "1M %", "Rel Str %", "RSI", "vs SMA50 %", "Score", "Signal", "Reasons"]
 
 def color_signal_col(val):
     if val == "BUY":  return "background-color:#16a34a;color:white;font-weight:bold"
@@ -225,6 +248,8 @@ styled = (
     .format({
         "Price":      "${:.2f}",
         "1W %":       "{:+.2f}%",
+        "1M %":       "{:+.2f}%",
+        "Rel Str %":  "{:+.2f}%",
         "RSI":        "{:.1f}",
         "vs SMA50 %": "{:+.1f}%",
         "Score":      "{:+.1f}",
