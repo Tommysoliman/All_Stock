@@ -4,8 +4,10 @@ warnings.filterwarnings("ignore")
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
+from ta.momentum import RSIIndicator
+from ta.trend import MACD, SMAIndicator
+from ta.volatility import BollingerBands
 from datetime import datetime
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -56,43 +58,43 @@ def compute_one(ticker: str, raw, meta_row: dict) -> dict | None:
         if len(df) < 60:
             return None
         df.columns = [c.lower() for c in df.columns]
+        close = df["close"]
 
-        df.ta.rsi(length=14,  append=True)
-        df.ta.macd(append=True)
-        df.ta.bbands(length=20, append=True)
-        df.ta.sma(length=50,  append=True)
-        df.ta.sma(length=200, append=True)
+        rsi_val   = RSIIndicator(close=close, window=14).rsi()
+        macd_obj  = MACD(close=close)
+        bb_obj    = BollingerBands(close=close, window=20, window_dev=2)
+        sma50_s   = SMAIndicator(close=close, window=50).sma_indicator()
+        sma200_s  = SMAIndicator(close=close, window=200).sma_indicator()
 
-        last  = df.iloc[-1]
-        prev  = df.iloc[-2]
-        price = last["close"]
-        score = 0.0
+        price  = close.iloc[-1]
+        score  = 0.0
         reasons: list[str] = []
 
         # RSI
-        rsi = last.get("RSI_14")
+        rsi = rsi_val.iloc[-1]
         if pd.notna(rsi):
-            if rsi < 30:   score += 1;   reasons.append(f"RSI oversold ({rsi:.1f})")
-            elif rsi > 70: score -= 1;   reasons.append(f"RSI overbought ({rsi:.1f})")
+            if rsi < 30:   score += 1;  reasons.append(f"RSI oversold ({rsi:.1f})")
+            elif rsi > 70: score -= 1;  reasons.append(f"RSI overbought ({rsi:.1f})")
 
         # MACD
-        mh, mhp = last.get("MACDh_12_26_9"), prev.get("MACDh_12_26_9")
+        mh  = macd_obj.macd_diff().iloc[-1]
+        mhp = macd_obj.macd_diff().iloc[-2]
         if pd.notna(mh) and pd.notna(mhp):
-            if   mh > 0 and mhp <= 0: score += 1;   reasons.append("MACD bullish cross")
-            elif mh < 0 and mhp >= 0: score -= 1;   reasons.append("MACD bearish cross")
+            if   mh > 0 and mhp <= 0: score += 1;  reasons.append("MACD bullish cross")
+            elif mh < 0 and mhp >= 0: score -= 1;  reasons.append("MACD bearish cross")
             elif mh > 0:              score += 0.5
             else:                     score -= 0.5
 
         # Bollinger Bands
-        bbl = last.get("BBL_20_2.0")
-        bbu = last.get("BBU_20_2.0")
+        bbl = bb_obj.bollinger_lband().iloc[-1]
+        bbu = bb_obj.bollinger_hband().iloc[-1]
         if pd.notna(bbl) and pd.notna(bbu):
             if   price < bbl: score += 1;  reasons.append("Below lower BB")
             elif price > bbu: score -= 1;  reasons.append("Above upper BB")
 
         # SMA 50 / 200
-        sma50  = last.get("SMA_50")
-        sma200 = last.get("SMA_200")
+        sma50  = sma50_s.iloc[-1]
+        sma200 = sma200_s.iloc[-1]
         if pd.notna(sma50) and pd.notna(sma200):
             if sma50 > sma200: score += 1;  reasons.append("Golden cross (50>200)")
             else:              score -= 1;  reasons.append("Death cross (50<200)")
@@ -100,7 +102,7 @@ def compute_one(ticker: str, raw, meta_row: dict) -> dict | None:
             score += 0.5 if price > sma50 else -0.5
 
         signal  = "BUY" if score >= 2 else ("SELL" if score <= -2 else "HOLD")
-        chg1w   = (price / df["close"].iloc[-6] - 1) * 100 if len(df) >= 6 else np.nan
+        chg1w   = (price / close.iloc[-6] - 1) * 100 if len(close) >= 6 else np.nan
         pct_from_sma50 = ((price - sma50) / sma50 * 100) if pd.notna(sma50) else np.nan
 
         return {
