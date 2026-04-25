@@ -67,7 +67,7 @@
       gap: 10px;
       padding: 0 16px 14px;
     }
-    .controls select {
+    .controls select, #search-input {
       flex: 1;
       min-width: 160px;
       background: #1e1e30;
@@ -77,7 +77,17 @@
       padding: 9px 12px;
       font-size: 0.85rem;
       cursor: pointer;
+      outline: none;
     }
+    #search-input {
+      min-width: 180px;
+      cursor: text;
+    }
+    #search-input:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 2px rgba(59,130,246,0.3);
+    }
+    #search-input::placeholder { color: #4a5568; }
 
     #updated {
       padding: 0 16px 10px;
@@ -199,6 +209,8 @@
 </div>
 
 <div class="controls">
+  <input id="search-input" type="text" placeholder="🔍 Search ticker or company…" autocomplete="off" />
+
   <select id="sort-sel">
     <option value="score-desc">📈 Most Expected to BUY</option>
     <option value="score-asc">📉 Most Expected to SELL</option>
@@ -282,10 +294,12 @@
   function renderTable() {
     const sector = document.getElementById("sector-sel").value;
     const signal = document.getElementById("signal-sel").value;
+    const query  = document.getElementById("search-input").value.trim().toLowerCase();
 
     let data = allData.filter(r =>
       (!sector || r.sector === sector) &&
-      (!signal || r.signal === signal)
+      (!signal || r.signal === signal) &&
+      (!query  || r.ticker.toLowerCase().includes(query) || r.company.toLowerCase().includes(query))
     );
 
     // Sort
@@ -385,6 +399,7 @@
 
   document.getElementById("sector-sel").addEventListener("change", renderTable);
   document.getElementById("signal-sel").addEventListener("change", renderTable);
+  document.getElementById("search-input").addEventListener("input", renderTable);
 
   // Column header click sort
   document.querySelectorAll("thead th[data-col]").forEach(th => {
