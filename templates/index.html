@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>📈 Stock Screener</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f0f14;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1a1a2e;
+      border-bottom: 1px solid #2d2d44;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    #refresh-btn {
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #refresh-btn:hover { background: #2563eb; }
+
+    /* ── Metrics ── */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      padding: 14px 16px;
+    }
+    .metric-card {
+      background: #1a1a2e;
+      border-radius: 10px;
+      padding: 12px 10px;
+      text-align: center;
+    }
+    .metric-card .label { font-size: 0.7rem; color: #94a3b8; margin-bottom: 4px; }
+    .metric-card .value { font-size: 1.4rem; font-weight: 800; }
+    .buy-count  { color: #4ade80; }
+    .sell-count { color: #f87171; }
+    .hold-count { color: #fbbf24; }
+    .total-count{ color: #93c5fd; }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0 16px 14px;
+    }
+    .controls select {
+      flex: 1;
+      min-width: 160px;
+      background: #1e1e30;
+      color: #e2e8f0;
+      border: 1px solid #3d3d5c;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    #updated {
+      padding: 0 16px 10px;
+      font-size: 0.75rem;
+      color: #64748b;
+    }
+
+    /* ── Loading ── */
+    #loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 20px;
+      gap: 16px;
+    }
+    .spinner {
+      width: 44px; height: 44px;
+      border: 4px solid #2d2d44;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading p { color: #94a3b8; font-size: 0.9rem; }
+
+    /* ── Table ── */
+    #table-wrap {
+      overflow-x: auto;
+      padding: 0 16px 80px;
+      display: none;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      min-width: 820px;
+    }
+    thead th {
+      background: #1a1a2e;
+      color: #94a3b8;
+      font-weight: 600;
+      padding: 10px 10px;
+      text-align: left;
+      position: sticky;
+      top: 57px;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+    }
+    thead th:hover { color: #e2e8f0; }
+    thead th.sorted-asc::after  { content: " ↑"; color: #3b82f6; }
+    thead th.sorted-desc::after { content: " ↓"; color: #3b82f6; }
+
+    tbody tr { border-bottom: 1px solid #1e1e30; }
+    tbody tr:hover { background: #1a1a2e; }
+    tbody td { padding: 9px 10px; vertical-align: middle; }
+
+    /* Signal badges */
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+    .badge-buy  { background: #16a34a; color: #fff; }
+    .badge-sell { background: #dc2626; color: #fff; }
+    .badge-hold { background: #d97706; color: #fff; }
+
+    .green  { color: #4ade80; }
+    .red    { color: #f87171; }
+    .muted  { color: #64748b; font-size: 0.75rem; }
+
+    /* RSI coloring */
+    .rsi-low  { color: #4ade80; font-weight: 600; }
+    .rsi-high { color: #f87171; font-weight: 600; }
+
+    .ticker-col { font-weight: 700; color: #93c5fd; }
+    .company-col { color: #cbd5e1; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .reasons-col { color: #64748b; font-size: 0.72rem; max-width: 220px; }
+
+    #no-results {
+      text-align: center;
+      padding: 40px;
+      color: #64748b;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>📈 Stock Screener &nbsp;<span style="font-weight:400;color:#64748b;font-size:0.85rem">S&amp;P 500</span></h1>
+  <button id="refresh-btn">🔄 Refresh</button>
+</header>
+
+<div class="metrics">
+  <div class="metric-card">
+    <div class="label">📈 BUY</div>
+    <div class="value buy-count" id="cnt-buy">—</div>
+  </div>
+  <div class="metric-card">
+    <div class="label">📉 SELL</div>
+    <div class="value sell-count" id="cnt-sell">—</div>
+  </div>
+  <div class="metric-card">
+    <div class="label">📊 HOLD</div>
+    <div class="value hold-count" id="cnt-hold">—</div>
+  </div>
+  <div class="metric-card">
+    <div class="label">🔢 Total</div>
+    <div class="value total-count" id="cnt-total">—</div>
+  </div>
+</div>
+
+<div class="controls">
+  <select id="sort-sel">
+    <option value="score-desc">📈 Most Expected to BUY</option>
+    <option value="score-asc">📉 Most Expected to SELL</option>
+    <option value="rsi-asc">RSI — Lowest (oversold)</option>
+    <option value="rsi-desc">RSI — Highest (overbought)</option>
+    <option value="chg1w-desc">1W % Change ↑</option>
+    <option value="chg1w-asc">1W % Change ↓</option>
+    <option value="rel_str-desc">Rel Strength ↑</option>
+    <option value="ticker-asc">Alphabetical A → Z</option>
+  </select>
+
+  <select id="sector-sel">
+    <option value="">🏭 All Sectors</option>
+  </select>
+
+  <select id="signal-sel">
+    <option value="">📡 All Signals</option>
+    <option value="BUY">📈 BUY only</option>
+    <option value="SELL">📉 SELL only</option>
+    <option value="HOLD">📊 HOLD only</option>
+  </select>
+</div>
+
+<div id="updated"></div>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <p>Downloading &amp; computing signals… (first load ~60s)</p>
+</div>
+
+<div id="table-wrap">
+  <table id="stocks-table">
+    <thead>
+      <tr>
+        <th data-col="ticker">Ticker</th>
+        <th data-col="company">Company</th>
+        <th data-col="sector">Sector</th>
+        <th data-col="price">Price</th>
+        <th data-col="chg1w">1W %</th>
+        <th data-col="chg1m">1M %</th>
+        <th data-col="rel_str">Rel Str %</th>
+        <th data-col="rsi">RSI</th>
+        <th data-col="vs_sma50">vs SMA50</th>
+        <th data-col="score">Score</th>
+        <th data-col="signal">Signal</th>
+        <th data-col="reasons">Reasons</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div id="no-results">No stocks match the current filters.</div>
+</div>
+
+<script>
+  let allData   = [];
+  let allSectors = [];
+  let sortCol   = "score";
+  let sortDir   = "desc";
+
+  const fmt = (v, dec=2, prefix="", suffix="") =>
+    v == null ? "—" : `${prefix}${(+v).toFixed(dec)}${suffix}`;
+
+  const fmtPct = (v) => {
+    if (v == null) return "—";
+    const cls = v > 0 ? "green" : v < 0 ? "red" : "";
+    return `<span class="${cls}">${v > 0 ? "+" : ""}${(+v).toFixed(2)}%</span>`;
+  };
+
+  const signalBadge = (s) => {
+    const map = { BUY: ["badge-buy","📈 BUY"], SELL: ["badge-sell","📉 SELL"], HOLD: ["badge-hold","📊 HOLD"] };
+    const [cls, label] = map[s] || ["","—"];
+    return `<span class="badge ${cls}">${label}</span>`;
+  };
+
+  const rsiCell = (v) => {
+    if (v == null) return "—";
+    const cls = v < 30 ? "rsi-low" : v > 70 ? "rsi-high" : "";
+    return `<span class="${cls}">${(+v).toFixed(1)}</span>`;
+  };
+
+  function renderTable() {
+    const sector = document.getElementById("sector-sel").value;
+    const signal = document.getElementById("signal-sel").value;
+
+    let data = allData.filter(r =>
+      (!sector || r.sector === sector) &&
+      (!signal || r.signal === signal)
+    );
+
+    // Sort
+    data.sort((a, b) => {
+      let va = a[sortCol], vb = b[sortCol];
+      if (va == null) va = sortDir === "asc" ?  Infinity : -Infinity;
+      if (vb == null) vb = sortDir === "asc" ?  Infinity : -Infinity;
+      if (typeof va === "string") return sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
+      return sortDir === "asc" ? va - vb : vb - va;
+    });
+
+    const tbody = document.getElementById("tbody");
+    const noRes = document.getElementById("no-results");
+
+    if (data.length === 0) {
+      tbody.innerHTML = "";
+      noRes.style.display = "block";
+      return;
+    }
+    noRes.style.display = "none";
+
+    tbody.innerHTML = data.map(r => `
+      <tr>
+        <td class="ticker-col">${r.ticker}</td>
+        <td class="company-col" title="${r.company}">${r.company}</td>
+        <td class="muted">${r.sector}</td>
+        <td>$${(+r.price).toFixed(2)}</td>
+        <td>${fmtPct(r.chg1w)}</td>
+        <td>${fmtPct(r.chg1m)}</td>
+        <td>${fmtPct(r.rel_str)}</td>
+        <td>${rsiCell(r.rsi)}</td>
+        <td>${fmtPct(r.vs_sma50)}</td>
+        <td class="${r.score >= 2 ? 'green' : r.score <= -2 ? 'red' : ''}">${r.score > 0 ? "+" : ""}${r.score}</td>
+        <td>${signalBadge(r.signal)}</td>
+        <td class="reasons-col" title="${r.reasons}">${r.reasons || "—"}</td>
+      </tr>
+    `).join("");
+  }
+
+  function applySort(col) {
+    if (sortCol === col) {
+      sortDir = sortDir === "asc" ? "desc" : "asc";
+    } else {
+      sortCol = col;
+      sortDir = col === "ticker" || col === "company" ? "asc" : "desc";
+    }
+    document.querySelectorAll("thead th").forEach(th => {
+      th.classList.remove("sorted-asc","sorted-desc");
+      if (th.dataset.col === col) th.classList.add(`sorted-${sortDir}`);
+    });
+    renderTable();
+  }
+
+  function loadData() {
+    fetch("/api/data")
+      .then(r => r.json())
+      .then(json => {
+        if (json.status === "ready") {
+          allData    = json.data;
+          allSectors = json.sectors;
+
+          // Counts
+          document.getElementById("cnt-buy").textContent   = json.counts.buy;
+          document.getElementById("cnt-sell").textContent  = json.counts.sell;
+          document.getElementById("cnt-hold").textContent  = json.counts.hold;
+          document.getElementById("cnt-total").textContent = json.counts.total;
+          document.getElementById("updated").textContent   = "Last updated: " + json.updated;
+
+          // Populate sector dropdown
+          const sel = document.getElementById("sector-sel");
+          sel.innerHTML = '<option value="">🏭 All Sectors</option>';
+          allSectors.forEach(s => {
+            const opt = document.createElement("option");
+            opt.value = s; opt.textContent = s;
+            sel.appendChild(opt);
+          });
+
+          document.getElementById("loading").style.display    = "none";
+          document.getElementById("table-wrap").style.display = "block";
+          renderTable();
+        } else if (json.status && json.status.startsWith("error")) {
+          document.querySelector("#loading p").textContent = "Error: " + json.status;
+        } else {
+          setTimeout(loadData, 3000); // poll while computing
+        }
+      })
+      .catch(() => setTimeout(loadData, 5000));
+  }
+
+  // Sort dropdown
+  document.getElementById("sort-sel").addEventListener("change", function() {
+    const [col, dir] = this.value.split("-");
+    sortCol = col; sortDir = dir;
+    document.querySelectorAll("thead th").forEach(th => th.classList.remove("sorted-asc","sorted-desc"));
+    renderTable();
+  });
+
+  document.getElementById("sector-sel").addEventListener("change", renderTable);
+  document.getElementById("signal-sel").addEventListener("change", renderTable);
+
+  // Column header click sort
+  document.querySelectorAll("thead th[data-col]").forEach(th => {
+    th.addEventListener("click", () => applySort(th.dataset.col));
+  });
+
+  // Refresh button
+  document.getElementById("refresh-btn").addEventListener("click", () => {
+    document.getElementById("loading").style.display    = "flex";
+    document.getElementById("table-wrap").style.display = "none";
+    fetch("/api/refresh", { method: "POST" })
+      .then(() => setTimeout(loadData, 3000));
+  });
+
+  loadData();
+</script>
+</body>
+</html>

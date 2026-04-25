@@ -4,6 +4,6 @@
     "buildCommand": "pip install -r requirements.txt"
   },
   "deploy": {
-    "startCommand": "streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true"
+    "startCommand": "gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1"
   }
 }
