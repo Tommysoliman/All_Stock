@@ -219,9 +219,9 @@ def color_rsi(val):
 
 styled = (
     view[display_cols].style
-    .applymap(color_signal_col, subset=["Signal"])
-    .applymap(color_score,      subset=["Score"])
-    .applymap(color_rsi,        subset=["RSI"])
+    .map(color_signal_col, subset=["Signal"])
+    .map(color_score,      subset=["Score"])
+    .map(color_rsi,        subset=["RSI"])
     .format({
         "Price":      "${:.2f}",
         "1W %":       "{:+.2f}%",
