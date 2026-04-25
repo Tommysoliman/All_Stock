@@ -31,8 +31,11 @@ st.markdown("""
 # ── Data fetching ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_sp500_meta() -> pd.DataFrame:
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    df  = pd.read_html(url)[0]
+    import requests, io
+    url     = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    html    = requests.get(url, headers=headers, timeout=15).text
+    df      = pd.read_html(io.StringIO(html))[0]
     df["Symbol"] = df["Symbol"].str.replace(".", "-", regex=False)
     return df[["Symbol", "Security", "GICS Sector", "GICS Sub-Industry"]].rename(
         columns={"Security": "Company", "GICS Sector": "Sector", "GICS Sub-Industry": "Industry"}
